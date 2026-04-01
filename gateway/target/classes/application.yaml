@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway
+
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+            - id: authentication
+              uri: http://localhost:8081
+              predicates:
+                - Path=/api/auth/**
+
+            - id: user-service
+              uri: http://localhost:8082
+              predicates:
+                - Path=/api/users/**
+
+jwt:
+  secret: my-super-secure-secret-key-my-super-secure-secret-key
+  access-token-expiration: 900000
+  refresh-token-expiration: 604800000
+
+logging:
+  level:
+    org.springframework.security: DEBUG

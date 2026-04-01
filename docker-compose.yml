@@ -1,0 +1,24 @@
+version: '0.1'
+
+services:
+  auth_db:
+    image: postgres:15
+    container_name: auth_db
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_pass
+    ports:
+      - "5433:5432"
+
+  admin_db:
+    image: postgres:15
+    container_name: admin_db
+    environment:
+      POSTGRES_DB: admin_db
+      POSTGRES_USER: admin_user
+      POSTGRES_PASSWORD: admin_pass
+    ports:
+      - "5434:5432"
+
+
