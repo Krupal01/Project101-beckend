@@ -1,11 +1,19 @@
 package com.crm.authentication.service;
 
 import com.crm.authentication.configure.JwtConfig;
+import com.crm.authentication.dto.LogoutRequest;
+import com.crm.authentication.dto.RefreshTokenRequest;
+import com.crm.authentication.dto.TokenRefreshResponse;
 import com.crm.authentication.entity.RefreshToken;
+import com.crm.authentication.entity.User;
+import com.crm.authentication.exception.CustomException;
 import com.crm.authentication.repository.RefreshTokenRepository;
+import com.crm.authentication.repository.UserRepository;
+import com.crm.authentication.utils.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -15,62 +23,126 @@ import java.util.UUID;
 public class TokenService {
 
     private final RefreshTokenRepository refreshTokenRepository;
-    private final JwtConfig jwtConfig;
-    private final PasswordEncoder passwordEncoder;
+    private final UserRepository         userRepository;
+    private final JwtConfig              jwtConfig;
+    private final JwtUtil                jwtUtil;
+    private final PasswordEncoder        passwordEncoder;
 
-    public String createRefreshToken(Long userId) {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Create
+    // ─────────────────────────────────────────────────────────────────────────
 
-        String token = UUID.randomUUID().toString();
+    /**
+     * Generates a refresh token for the given user.
+     * Stores a bcrypt hash; returns "{uuid}:{secret}" to the caller.
+     */
+    public String createRefreshToken(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new CustomException("User not found"));
 
-        RefreshToken refreshToken = new RefreshToken();
-        refreshToken.setUserId(userId);
-        refreshToken.setTokenHash(passwordEncoder.encode(token));
-        refreshToken.setExpiresAt(LocalDateTime.now()
+        String secret = UUID.randomUUID().toString();
+
+        RefreshToken token = new RefreshToken();
+        token.setUser(user);                                        // @ManyToOne — set the entity, not a field
+        token.setTokenHash(passwordEncoder.encode(secret));
+        token.setExpiresAt(LocalDateTime.now()
                 .plusSeconds(jwtConfig.getRefreshTokenExpiration() / 1000));
-        refreshToken.setRevoked(false);
+        token.setIsRevoked(false);
+        token.setCreatedAt(LocalDateTime.now());
 
-        RefreshToken saved = refreshTokenRepository.save(refreshToken);
-
-        // Use auto-generated ID as the public lookup key
-        return saved.getId() + ":" + token;
+        RefreshToken saved = refreshTokenRepository.save(token);
+        return saved.getId() + ":" + secret;
     }
 
-    public RefreshToken validateRefreshToken(String token) {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Refresh
+    // ─────────────────────────────────────────────────────────────────────────
 
-        String[] parts = token.split(":", 2);
+    public TokenRefreshResponse refresh(RefreshTokenRequest request) {
+        RefreshToken stored = validateRefreshToken(request.refreshToken());
+
+        // User already hydrated by JPA via @ManyToOne — no extra query
+        User user = stored.getUser();
+
+        // Update lastLoginAt on every token refresh
+        user.setLastLoginAt(LocalDateTime.now());
+        userRepository.save(user);
+
+        String newAccessToken = jwtUtil.generateAccessToken(user);
+        long expiresIn = jwtConfig.getAccessTokenExpiration() / 1000; // ms → seconds
+        return new TokenRefreshResponse(newAccessToken, expiresIn);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Revoke
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Single-device logout — revokes one token. */
+    public void revokeToken(LogoutRequest request) {
+        revokeByRawValue(request.refreshToken());
+    }
+
+    /** All-device logout — revokes every token for a user. Called after password change. */
+    @Transactional
+    public void revokeAllTokensForUser(UUID userId) {
+        refreshTokenRepository.revokeAllByUserId(userId);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Internal helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public RefreshToken validateRefreshToken(String rawToken) {
+        String[] parts = rawToken.split(":", 2);
         if (parts.length != 2) {
-            throw new RuntimeException("Invalid refresh token format");
+            throw new CustomException("Invalid refresh token format");
         }
 
-        String tokenId = parts[0];
-        String secret  = parts[1];
+        UUID tokenId;
+        try {
+            tokenId = UUID.fromString(parts[0]);
+        } catch (IllegalArgumentException e) {
+            throw new CustomException("Invalid refresh token format");
+        }
 
-        RefreshToken refreshToken = refreshTokenRepository.findById(Long.parseLong(tokenId))
-                .orElseThrow(() -> new RuntimeException("Invalid refresh token"));
+        String secret = parts[1];
 
-        // Verify the secret against stored hash
+        RefreshToken refreshToken = refreshTokenRepository.findById(tokenId)
+                .orElseThrow(() -> new CustomException("Invalid refresh token"));
+
         if (!passwordEncoder.matches(secret, refreshToken.getTokenHash())) {
-            throw new RuntimeException("Invalid refresh token");
+            throw new CustomException("Invalid refresh token");
         }
 
-        if (refreshToken.isRevoked()) {
-            throw new RuntimeException("Token revoked");
+        // Boolean wrapper — null-safe check before unboxing
+        if (Boolean.TRUE.equals(refreshToken.getIsRevoked())) {
+            throw new CustomException("Token has been revoked");
         }
 
         if (refreshToken.getExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("Token expired");
+            throw new CustomException("Token has expired");
         }
 
         return refreshToken;
     }
 
-    public void revokeToken(String rawToken) {
-        Long id = Long.parseLong(rawToken.split(":", 2)[0]);
+    private void revokeByRawValue(String rawToken) {
+        String[] parts = rawToken.split(":", 2);
+        if (parts.length != 2) {
+            throw new CustomException("Invalid refresh token format");
+        }
 
-        RefreshToken refreshToken = refreshTokenRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Invalid refresh token"));
+        UUID tokenId;
+        try {
+            tokenId = UUID.fromString(parts[0]);
+        } catch (IllegalArgumentException e) {
+            throw new CustomException("Invalid refresh token format");
+        }
 
-        refreshToken.setRevoked(true);
+        RefreshToken refreshToken = refreshTokenRepository.findById(tokenId)
+                .orElseThrow(() -> new CustomException("Invalid refresh token"));
+
+        refreshToken.setIsRevoked(true);
         refreshTokenRepository.save(refreshToken);
     }
 }

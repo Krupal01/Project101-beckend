@@ -1,10 +1,9 @@
 package com.crm.authentication.dto;
 
+import jakarta.validation.constraints.NotBlank;
 
-import lombok.Getter;
-import lombok.Setter;
+public record RefreshTokenRequest(
 
-@Getter @Setter
-public class RefreshTokenRequest {
-    private String refreshToken;
-}
+        @NotBlank(message = "Refresh token is required")
+        String refreshToken
+) {}

@@ -1,33 +1,41 @@
 package com.crm.authentication.entity;
 
 import jakarta.persistence.*;
-import lombok.Setter;
 import lombok.Getter;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "refresh_tokens")
-@Getter @Setter
+@Getter
+@Setter
 public class RefreshToken {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @GeneratedValue
+    private UUID id;
 
-    private Long userId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
-    @Column(length = 500)
+    @Column(name = "token_hash", nullable = false)
     private String tokenHash;
+
+    @Column(name = "device_info", length = 500)
     private String deviceInfo;
+
+    @Column(name = "ip_address", length = 45)
     private String ipAddress;
 
+    @Column(name = "expires_at", nullable = false)
     private LocalDateTime expiresAt;
-    private boolean revoked = false;
-    private LocalDateTime createdAt;
 
-    @PrePersist
-    public void prePersist() {
-        this.createdAt = LocalDateTime.now();
-    }
+    @Column(name = "is_revoked")
+    private Boolean isRevoked = false;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
 }

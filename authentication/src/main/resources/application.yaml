@@ -29,6 +29,21 @@ eureka:
 
 auth:
   public-paths:
-    - /api/auth/**
+    - /api/v1/auth/**
+  otp:
+    enabled: false
   security:
     secret: my-super-secure-secret-key-my-super-secure-secret-key
+
+# Dev (default — no entry needed, console is the default)
+sms:
+  provider: console
+
+# ─── Switch to this for production ───
+#sms:
+#  provider: twilio
+
+twilio:
+  account-sid: ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  auth-token: your_auth_token
+  from-number: "+1XXXXXXXXXX"
